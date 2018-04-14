@@ -1,5 +1,6 @@
-const SolidityCoder = require("web3/lib/solidity/coder.js");
+//const SolidityCoder = require("web3/lib/solidity/coder.js"); //replaced by Interface to correctly parse ABIv2
 const Web3 = require('web3');
+const Interface = require('ethers-contracts/interface.js');
 
 const state = {
   savedABIs : [],
@@ -67,7 +68,8 @@ function _decodeMethod(data) {
   const abiItem = state.methodIDs[methodID];
   if (abiItem) {
     const params = abiItem.inputs.map(function (item) { return item.type; });
-    let decoded = SolidityCoder.decodeParams(params, data.slice(10));
+    // let decoded = SolidityCoder.decodeParams(params, data.slice(10));
+    let decoded = Interface.decodeParams(params, '0x' + data.slice(10));
     return {
       name: abiItem.name,
       params: decoded.map(function (param, index) {
@@ -132,7 +134,8 @@ function _decodeLogs(logs) {
           }
         }
       );
-      const decodedData = SolidityCoder.decodeParams(dataTypes, logData.slice(2));
+      //const decodedData = SolidityCoder.decodeParams(dataTypes, logData.slice(2));
+      const decodedData = Interface.decodeParams(dataTypes, logData);
       // Loop topic and data to get the params
       method.inputs.map(function (param) {
         var decodedP = {
