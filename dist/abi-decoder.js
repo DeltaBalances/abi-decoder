@@ -15091,7 +15091,8 @@ function _decodeLogs(logs) {
       return {
         name: method.name,
         events: decodedParams,
-        address: logItem.address
+        address: logItem.address,
+        blockNumber: logItem.blockNumber
       };
     }
   });
