@@ -3,7 +3,7 @@ const Web3 = require('web3');
 const Interface = require('ethers-contracts/interface.js');
 
 const state = {
-  savedABIs : [],
+  savedABIs: [],
   methodIDs: {}
 }
 
@@ -16,12 +16,11 @@ function _addABI(abiArray) {
 
     // Iterate new abi to generate method id's
     abiArray.map(function (abi) {
-      if(abi.name){
-        const signature = new Web3().sha3(abi.name + "(" + abi.inputs.map(function(input) {return input.type;}).join(",") + ")");
-        if(abi.type == "event"){
+      if (abi.name) {
+        const signature = new Web3().sha3(_getSignature(abi));
+        if (abi.type == "event") {
           state.methodIDs[signature.slice(2)] = abi;
-        }
-        else{
+        } else {
           state.methodIDs[signature.slice(2, 10)] = abi;
         }
       }
@@ -34,19 +33,66 @@ function _addABI(abiArray) {
   }
 }
 
+// get an unhashed function signature 'function(address,uin256)'
+function _getSignature(abiItem) {
+  if (abiItem.name) {
+    return abiItem.name + _concatInput(abiItem.inputs);
+  } else {
+    throw new Error("Expected a function or event name");
+  }
+}
+
+function _concatInput(inputArray) {
+  inputArray = inputArray.map(function (input) {
+    //check for structs (tuple in abi)
+    if (input.type.indexOf('tuple') === -1) {
+      return input.type;
+    } else {
+      let type = _concatInput(input.components);
+      //adjust for tuple arrays  "tuple[]", "tuple[][]"
+      let length = input.type.length - 5;
+      while (length >= 2) {
+        type += "[]";
+        length -= 2;
+      }
+      return type;
+    }
+  });
+  return "(" + inputArray.join(',') + ")";
+}
+
+
+// get array of abi input types, with tuples as string 'tuple(uint256,address)'
+function _getInputTypes(inputArray) {
+
+  return inputArray.map(function (input) {
+    if (input.type.indexOf('tuple') === -1) {
+      return input.type;
+    } else {
+      let type = 'tuple' + _concatInput(input.components);
+      //add (multi) arrays  "tuple[]", "tuple[][]"
+      let length = input.type.length - 5;
+      while (length >= 2) {
+        type += "[]";
+        length -= 2;
+      }
+      return type;
+    }
+  });
+}
+
 function _removeABI(abiArray) {
   if (Array.isArray(abiArray)) {
 
     // Iterate new abi to generate method id's
     abiArray.map(function (abi) {
-      if(abi.name){
-        const signature = new Web3().sha3(abi.name + "(" + abi.inputs.map(function(input) {return input.type;}).join(",") + ")");
-        if(abi.type == "event"){
+      if (abi.name) {
+        const signature = new Web3().sha3(_getSignature(abi));
+        if (abi.type == "event") {
           if (state.methodIDs[signature.slice(2)]) {
             delete state.methodIDs[signature.slice(2)];
           }
-        }
-        else{
+        } else {
           if (state.methodIDs[signature.slice(2, 10)]) {
             delete state.methodIDs[signature.slice(2, 10)];
           }
@@ -67,8 +113,7 @@ function _decodeMethod(data) {
   const methodID = data.slice(2, 10);
   const abiItem = state.methodIDs[methodID];
   if (abiItem) {
-    const params = abiItem.inputs.map(function (item) { return item.type; });
-    // let decoded = SolidityCoder.decodeParams(params, data.slice(10));
+    const params = _getInputTypes(abiItem.inputs);
     let decoded = Interface.decodeParams(params, '0x' + data.slice(10));
     return {
       name: abiItem.name,
@@ -76,23 +121,34 @@ function _decodeMethod(data) {
         let parsedParam = param;
         const isUint = abiItem.inputs[index].type.indexOf("uint") == 0;
         const isInt = abiItem.inputs[index].type.indexOf("int") == 0;
+        const isTuple = abiItem.inputs[index].type.indexOf("tuple") == 0;
 
         if (isUint || isInt) {
-		  parsedParam = parseArrayNumber(param);
-			
-		  function parseArrayNumber (param2) {
-		    let parsedParam2 = param2;
-			const isArray = Array.isArray(param2);
-			
-			if (isArray) {
-			  parsedParam2 = param2.map(val => parseArrayNumber(val));
-			} else {
-			  parsedParam2 = new Web3().toBigNumber(param2).toString();
-			}
-			return parsedParam2;
-		  }
-		  
+          parsedParam = parseArrayNumber(param);
+        } else if (isTuple) {
+          // handle numbers in structs(tuples) as well  (TODO nested structs)
+          parsedParam = parsedParam.map((val, index2) => {
+            let type = abiItem.inputs[index].components[index2].type;
+            if (type.indexOf("uint") == 0 || type.indexOf("int") == 0) {
+              return parseArrayNumber(val);
+            } else {
+              return val;
+            }
+          })
         }
+
+        function parseArrayNumber(param2) {
+          let parsedParam2 = param2;
+          const isArray = Array.isArray(param2);
+
+          if (isArray) {
+            parsedParam2 = param2.map(val => parseArrayNumber(val));
+          } else {
+            parsedParam2 = new Web3().toBigNumber(param2).toString();
+          }
+          return parsedParam2;
+        }
+
         return {
           name: abiItem.inputs[index].name,
           value: parsedParam,
@@ -103,7 +159,7 @@ function _decodeMethod(data) {
   }
 }
 
-function padZeros (address) {
+function padZeros(address) {
   var formatted = address;
   if (address.indexOf('0x') != -1) {
     formatted = address.slice(2);
@@ -117,9 +173,9 @@ function padZeros (address) {
 };
 
 function _decodeLogs(logs) {
-  return logs.map(function(logItem) {
+  return logs.map(function (logItem) {
     const methodID = logItem.topics[0].slice(2);
-    const method = state.methodIDs[methodID];
+    let method = state.methodIDs[methodID];
     if (method) {
       const logData = logItem.data;
       let decodedParams = [];
@@ -130,7 +186,8 @@ function _decodeLogs(logs) {
       method.inputs.map(
         function (input) {
           if (!input.indexed) {
-            dataTypes.push(input.type);
+            let type = _getInputTypes([input])[0];
+            dataTypes.push(type);
           }
         }
       );
@@ -152,10 +209,10 @@ function _decodeLogs(logs) {
           dataIndex++;
         }
 
-        if (param.type == "address"){
+        if (param.type == "address") {
           decodedP.value = padZeros(new Web3().toBigNumber(decodedP.value).toString(16));
         }
-        else if(param.type == "uint256" || param.type == "uint8" || param.type == "int" ){
+        else if (param.type == "uint256" || param.type == "uint8" || param.type == "int") {
           decodedP.value = new Web3().toBigNumber(decodedP.value).toString(10);
         }
 
