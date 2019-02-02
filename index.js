@@ -36,19 +36,25 @@ function _addABI(abiArray) {
 // get an unhashed function signature 'function(address,uin256)'
 function _getSignature(abiItem) {
   if (abiItem.name) {
-    return abiItem.name + _concatInput(abiItem.inputs);
+    return abiItem.name + '(' + _concatInput(abiItem.inputs, false) + ')';
   } else {
     throw new Error("Expected a function or event name");
   }
 }
 
-function _concatInput(inputArray) {
+// get a string of types in a function/event definition
+// The 'tuple' word for structs is omitted in function signatures, but used in decoding
+function _concatInput(inputArray, addTupleKeyword) {
+
   inputArray = inputArray.map(function (input) {
     //check for structs (tuple in abi)
     if (input.type.indexOf('tuple') === -1) {
       return input.type;
     } else {
-      let type = _concatInput(input.components);
+      let type = '(' + _concatInput(input.components, addTupleKeyword) + ')';
+      if (addTupleKeyword) {
+        type = 'tuple' + type;
+      }
       //adjust for tuple arrays  "tuple[]", "tuple[][]"
       let length = input.type.length - 5;
       while (length >= 2) {
@@ -58,7 +64,7 @@ function _concatInput(inputArray) {
       return type;
     }
   });
-  return "(" + inputArray.join(',') + ")";
+  return inputArray.join(',');
 }
 
 
@@ -69,14 +75,7 @@ function _getInputTypes(inputArray) {
     if (input.type.indexOf('tuple') === -1) {
       return input.type;
     } else {
-      let type = 'tuple' + _concatInput(input.components);
-      //add (multi) arrays  "tuple[]", "tuple[][]"
-      let length = input.type.length - 5;
-      while (length >= 2) {
-        type += "[]";
-        length -= 2;
-      }
-      return type;
+      return _concatInput([input], true);
     }
   });
 }
@@ -115,26 +114,38 @@ function _decodeMethod(data) {
   if (abiItem) {
     const params = _getInputTypes(abiItem.inputs);
     let decoded = Interface.decodeParams(params, '0x' + data.slice(10));
+
     return {
       name: abiItem.name,
       params: decoded.map(function (param, index) {
         let parsedParam = param;
-        const isUint = abiItem.inputs[index].type.indexOf("uint") == 0;
-        const isInt = abiItem.inputs[index].type.indexOf("int") == 0;
-        const isTuple = abiItem.inputs[index].type.indexOf("tuple") == 0;
+        let paramType = abiItem.inputs[index].type;
+        const isUint = paramType.indexOf("uint") == 0;
+        const isInt = paramType.indexOf("int") == 0;
+        const isTuple = paramType.indexOf("tuple") == 0;
 
         if (isUint || isInt) {
           parsedParam = parseArrayNumber(param);
         } else if (isTuple) {
-          // handle numbers in structs(tuples) as well  (TODO nested structs)
-          parsedParam = parsedParam.map((val, index2) => {
-            let type = abiItem.inputs[index].components[index2].type;
-            if (type.indexOf("uint") == 0 || type.indexOf("int") == 0) {
-              return parseArrayNumber(val);
-            } else {
-              return val;
-            }
-          })
+          let depth = (paramType.match(/]/g) || []).length;
+          parsedParam = parseTuple(parsedParam, depth);
+        }
+
+        function parseTuple(param2, arrayDepth) {
+          if (arrayDepth > 0) {
+            return param2.map((x) => {
+              return parseTuple(x, arrayDepth - 1);
+            });
+          } else {
+            return param2.map((val, index2) => {
+              let type = abiItem.inputs[index].components[index2].type;
+              if (type.indexOf("uint") == 0 || type.indexOf("int") == 0) {
+                return parseArrayNumber(val);
+              } else {
+                return val;
+              }
+            });
+          }
         }
 
         function parseArrayNumber(param2) {
