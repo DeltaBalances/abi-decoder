@@ -1,3 +1,6 @@
+This is a fork of https://github.com/ConsenSys/abi-decoder/ to add support for newer solidity datatypes like structs and multi-dimensional arrays.
+Testing is incomplete for now.
+
 # abi-decoder
 Nodejs and Javascript library for decoding data params and events from ethereum transactions
 
